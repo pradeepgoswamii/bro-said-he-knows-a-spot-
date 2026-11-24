@@ -60,7 +60,7 @@ button { border: 0; font: inherit; background: none; }
   z-index: 10;
   top: 0; left: 0; right: 0;
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) auto minmax(260px, 1fr);
+  grid-template-columns: minmax(190px, 1fr) auto minmax(190px, 1fr);
   align-items: center;
   gap: 32px;
   padding: 32px;
@@ -85,7 +85,7 @@ button { border: 0; font: inherit; background: none; }
   text-shadow: 0 2px 16px rgba(0, 0, 0, 0.2);
   text-decoration: none;
 }
-.site-nav a { font-size: 20px; font-weight: 400; }
+.site-nav a { font-size: 20px; font-weight: 400; white-space: nowrap; }
 .language-switcher {
   justify-self: end;
   display: inline-flex;
@@ -423,12 +423,24 @@ button { border: 0; font: inherit; background: none; }
 
 /* Media queries */
 @media (max-width: 1500px) {
-  .hero-title { font-size: 7.6rem; }
+  .site-nav { gap: clamp(12px, 1.4vw, 24px); }
+  .site-nav a { font-size: 16px; }
+  .hero-title { font-size: 6.5rem; }
   .story-panel h2 { font-size: 4.1rem; }
 }
 
 @media (max-width: 1100px) {
-  .hero-title { top: 15vh; font-size: 5.4rem; }
+  .site-header { grid-template-columns: 1fr auto; gap: 18px; padding: 24px; }
+  .site-nav {
+    grid-column: 1 / -1; grid-row: 2;
+    justify-content: flex-start;
+    gap: 18px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .site-nav::-webkit-scrollbar { display: none; }
+  .site-nav a { font-size: 14px; }
+  .hero-title { top: 15vh; font-size: 4.4rem; }
   .bridge-img { width: 138vw; }
   .frame-two-img { width: 132vw; }
   .story-panel h2 { font-size: 3.2rem; }
@@ -439,15 +451,7 @@ button { border: 0; font: inherit; background: none; }
 
 @media (max-width: 640px) {
   .stage { min-height: 640px; }
-  .site-header { grid-template-columns: 1fr auto; gap: 18px; padding: 24px; }
-  .site-nav {
-    grid-column: 1 / -1; grid-row: 2;
-    justify-content: flex-start;
-    gap: 18px;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .site-nav::-webkit-scrollbar { display: none; }
+  .site-header { padding: 20px; }
   .hero-title { top: 16vh; font-size: 3.1rem; }
   .bridge-img { bottom: 2vh; width: 190vw; }
   .frame-two-img { width: 176vw; }

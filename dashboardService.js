@@ -75,10 +75,13 @@ function analyzeUserPostsForPlace(location, db) {
       });
     }
 
-    // Heatmap points require real coordinates on the post. Only the documented
-    // "📍 Coordinates: <lat>, <lon>" format counts, so digits inside map URLs are
-    // never mistaken for a position.
-    const coordMatch = (post.location || '').match(/📍\s*Coordinates:\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/i);
+    // Heatmap points require real coordinates on the post. Accept both the
+    // documented "📍 Coordinates: <lat>, <lon>" format and the bare
+    // "<lat>, <lon>" format written by the post wizard. Values embedded in
+    // prose or map URLs are still ignored.
+    const coordText = String(post.location || '').trim();
+    const coordMatch = coordText.match(/📍\s*Coordinates:\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/i) ||
+      coordText.match(/(?:^|[^\d.])(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)(?=$|[^\d.])/);
     if (coordMatch) {
       const lat = parseFloat(coordMatch[1]);
       const lon = parseFloat(coordMatch[2]);

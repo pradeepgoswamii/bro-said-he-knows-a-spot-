@@ -13,8 +13,13 @@ let selectedVibes = ['Hidden Gems'];
 // Keep only a transient identity pointer in this tab; account profiles live in MongoDB.
 localStorage.removeItem('currentUser');
 function persistClientSession(user) {
-  if (!user || !user.username) { sessionStorage.removeItem('currentUser'); return; }
+  if (!user || !user.username) {
+    sessionStorage.removeItem('currentUser');
+    if (window.setAuthToken) window.setAuthToken(null);
+    return;
+  }
   sessionStorage.setItem('currentUser', JSON.stringify({ id: user.id || 0, username: user.username }));
+  if (user.token && window.setAuthToken) window.setAuthToken(user.token);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -241,6 +246,7 @@ function initGuestMode() {
       is_verified_pro: false,
       avatar: ''
     };
+    if (window.setAuthToken) window.setAuthToken(null);
     persistClientSession(guestUser);
     window.location.href = 'feed.html';
   });
@@ -282,7 +288,7 @@ function initFormSubmissions() {
         } else {
           const errText = data.error || 'Invalid username or password.';
           if (loginErrorMsg) {
-            loginErrorMsg.textContent = errText + ' (Click "Explorer Login" or "Pro Creator Login" below for 1-click access).';
+            loginErrorMsg.textContent = errText;
             loginErrorMsg.classList.remove('hidden');
           } else {
             alert(errText);
@@ -555,8 +561,9 @@ function setupProVerifyModal() {
         }
 
         // Update local session
+        if (data.token && window.setAuthToken) window.setAuthToken(data.token);
         if (data.user) {
-          pendingUserSession = data.user;
+          pendingUserSession = { ...data.user, token: data.token };
         } else {
           pendingUserSession.role = 'professional';
           pendingUserSession.is_verified_pro = true;

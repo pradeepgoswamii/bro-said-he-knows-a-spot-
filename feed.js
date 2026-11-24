@@ -23,7 +23,7 @@ localStorage.removeItem('offline_posts');
 localStorage.removeItem('currentUser');
 let currentUser = (() => {
   try { return JSON.parse(sessionStorage.getItem('currentUser') || 'null'); }
-  catch (err) { sessionStorage.removeItem('currentUser'); return null; }
+  catch (err) { sessionStorage.removeItem('currentUser'); if (window.setAuthToken) window.setAuthToken(null); return null; }
 })();
 let isGuest = !currentUser || !currentUser.username || !currentUser.id || String(currentUser.id) === '0';
 
@@ -135,6 +135,7 @@ async function syncSession() {
   } catch (err) {
     if (err.status === 404) {
       sessionStorage.removeItem('currentUser');
+      if (window.setAuthToken) window.setAuthToken(null);
       currentUser = {
         id: 0,
         name: 'Guest Explorer',
@@ -266,6 +267,7 @@ function initUserProfile() {
   if (logoutBtn) {
     logoutBtn.onclick = () => {
       sessionStorage.removeItem('currentUser');
+      if (window.setAuthToken) window.setAuthToken(null);
       window.location.href = 'auth.html';
     };
   }
@@ -1894,8 +1896,34 @@ function initCreatePostWizard() {
       return;
     }
     gpsBtn.textContent = 'Locating...';
-    navigator.geolocation.getCurrentPosition((pos) => {
-      locationInput.value = `${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`;
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const lat = pos.coords.latitude.toFixed(5);
+      const lon = pos.coords.longitude.toFixed(5);
+      const coords = `${lat}, ${lon}`;
+      gpsBtn.textContent = 'Resolving place...';
+
+      // Attach a human-readable place name so the hazard dashboard can match
+      // the post when someone searches by city. Coordinates alone still work.
+      let placeName = '';
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10&accept-language=en`,
+          { signal: controller.signal }
+        );
+        clearTimeout(timeoutId);
+        if (response.ok) {
+          const data = await response.json();
+          const a = data.address || {};
+          placeName = a.city || a.town || a.village || a.county || a.state || '';
+          if (!placeName && data.display_name) placeName = data.display_name.split(',').slice(0, 2).join(',').trim();
+        }
+      } catch (err) {
+        console.warn('Reverse geocoding unavailable:', err.message);
+      }
+
+      locationInput.value = placeName ? `${placeName} — ${coords}` : coords;
       gpsBtn.textContent = 'GPS set';
       setTimeout(() => { gpsBtn.textContent = '⌖ GPS'; }, 2000);
     }, () => {

@@ -21,6 +21,18 @@ if (fs.existsSync(envFile)) {
     process.env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, '$2');
   });
 }
+// Persistent secret used to sign session tokens. Generate it once on first run.
+if (!process.env.SESSION_SECRET) {
+  process.env.SESSION_SECRET = crypto.randomBytes(32).toString('hex');
+  try {
+    fs.appendFileSync(envFile, `\nSESSION_SECRET="${process.env.SESSION_SECRET}"\n`, 'utf8');
+  } catch (err) {
+    console.warn('Could not persist SESSION_SECRET to .env:', err.message);
+  }
+}
+const SESSION_SECRET = process.env.SESSION_SECRET;
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 if (process.env.MONGODB_DNS_SERVERS) {
   const dnsServers = process.env.MONGODB_DNS_SERVERS.split(',').map(server => server.trim()).filter(Boolean);
   if (dnsServers.length) dns.setServers(dnsServers);
@@ -47,6 +59,83 @@ app.use((req, res, next) => {
     });
   };
   requestPersistence.run(context, next);
+});
+
+// ---------- Signed session tokens ----------
+function issueSessionToken(user) {
+  const payload = {
+    uid: String(user.id),
+    iat: Date.now(),
+    exp: Date.now() + SESSION_TTL_MS
+  };
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', SESSION_SECRET).update(body).digest('base64url');
+  return `${body}.${signature}`;
+}
+
+function readSessionToken(req) {
+  const header = req.headers.authorization || '';
+  const match = /^Bearer\s+([^\s]+)$/i.exec(header);
+  if (!match) return null;
+  const [body, signature] = match[1].split('.');
+  if (!body || !signature) return null;
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(body).digest('base64url');
+  if (signature.length !== expected.length ||
+      !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (!payload.uid || !payload.exp || payload.exp < Date.now()) return null;
+    return payload;
+  } catch (err) {
+    return null;
+  }
+}
+
+// Attach the authenticated user (if any) and make identity-derived fields
+// authoritative. Clients can no longer act as another user by sending IDs.
+app.use('/api', (req, res, next) => {
+  const session = readSessionToken(req);
+  if (session && dbCache) {
+    const user = (dbCache.users || []).find(u => String(u.id) === session.uid);
+    if (user) req.authUser = user;
+  }
+  if (req.authUser) {
+    const u = req.authUser;
+    // Personalised reads must reflect the token owner, not a query-string ID.
+    // Express exposes `query` as a getter, so replace it with a fixed object.
+    const safeQuery = { ...req.query };
+    if (Object.prototype.hasOwnProperty.call(safeQuery, 'user_id')) {
+      safeQuery.user_id = u.id;
+    }
+    Object.defineProperty(req, 'query', { value: safeQuery, writable: true, configurable: true });
+    req.body = req.body || {};
+    req.body.user_id = u.id;
+    req.body.username = u.username;
+    req.body.from_user_id = u.id;
+    req.body.from_username = u.username;
+    req.body.follower_id = u.id;
+    req.body.reporter_id = u.id;
+    req.body.id = u.id;
+    if (Object.prototype.hasOwnProperty.call(req.body, 'is_verified_pro')) {
+      req.body.is_verified_pro = !!u.is_verified_pro;
+    }
+  }
+  next();
+});
+
+function requireAuth(req, res, next) {
+  if (!req.authUser) {
+    return res.status(401).json({ error: 'Please log in to continue.' });
+  }
+  next();
+}
+
+// Mutations always need a session except for auth, public analytics and SOS.
+const AUTH_FREE_PATHS = [/^\/auth\/(signup|signup\/verify|login)$/, /^\/dashboard\//, /^\/ai-planner$/, /^\/sos\/trigger$/];
+app.use('/api', (req, res, next) => {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+  if (AUTH_FREE_PATHS.some(pattern => pattern.test(req.path))) return next();
+  return requireAuth(req, res, next);
 });
 
 // Chrome DevTools probe and Favicon handlers to eliminate 404 & CSP errors
@@ -433,7 +522,7 @@ app.post('/api/auth/signup/verify', async (req, res) => {
       is_verified_pro: false,
       email_verified: true,
       email_verified_at: new Date().toISOString(),
-      aadhaar_no: null,
+      aadhaar_hash: null,
       followers_count: 0,
       created_at: new Date().toISOString()
     };
@@ -451,29 +540,31 @@ app.post('/api/auth/signup/verify', async (req, res) => {
     vibes: newUser.vibes,
     role: newUser.role,
     is_verified_pro: newUser.is_verified_pro,
-    email_verified: true
+    email_verified: true,
+    token: issueSessionToken(newUser)
   });
 });
 
 app.post('/api/auth/verify-professional', (req, res) => {
-  const { user_id, username, aadhaar_no, face_scan_verified } = req.body;
-  if (!aadhaar_no || !face_scan_verified) {
-    return res.status(400).json({ error: 'Valid Aadhaar number and Face Scan completion are required' });
+  const { user_id, username, aadhaar_no, face_scan_verified } = req.body || {};
+  if (!user_id || !aadhaar_no || !face_scan_verified) {
+    return res.status(400).json({ error: 'Valid Aadhaar number, Face Scan completion and a user session are required' });
   }
 
-  const cleanAadhaar = aadhaar_no.replace(/\s+/g, '').trim();
-  if (cleanAadhaar.length !== 12 || !/^\d{12}$/.test(cleanAadhaar)) {
+  const cleanAadhaar = String(aadhaar_no).replace(/\s+/g, '').trim();
+  if (!/^\d{12}$/.test(cleanAadhaar)) {
     return res.status(400).json({ error: 'Aadhaar number must be a valid 12-digit number' });
   }
+  const aadhaarHash = crypto.createHash('sha256').update(cleanAadhaar).digest('hex');
 
   const db = readDB();
   const targetUsername = (username || '').trim().toLowerCase();
 
-  // Strict 1 Professional Account per Aadhaar enforcement (type-safe comparison)
-  const existingAadhaarOwner = db.users.find(u => 
-    u.aadhaar_no === cleanAadhaar && 
-    String(u.id) !== String(user_id) && 
-    (u.username && u.username.toLowerCase() !== targetUsername)
+  // Strict 1 Professional Account per Aadhaar enforcement. Only the account id
+  // decides ownership, so a supplied username cannot bypass the check.
+  const existingAadhaarOwner = db.users.find(u =>
+    String(u.id) !== String(user_id) &&
+    (u.aadhaar_hash === aadhaarHash || (u.aadhaar_no && u.aadhaar_no === cleanAadhaar))
   );
   if (existingAadhaarOwner) {
     return res.status(400).json({
@@ -481,17 +572,18 @@ app.post('/api/auth/verify-professional', (req, res) => {
     });
   }
 
-  let user = db.users.find(u => 
-    (user_id && String(u.id) === String(user_id)) || 
-    (targetUsername && u.username && u.username.toLowerCase() === targetUsername)
-  );
+  const user = db.users.find(u => String(u.id) === String(user_id));
   if (!user) {
     return res.status(404).json({ error: 'User not found. Please log in or register before verifying.' });
+  }
+  if (targetUsername && (!user.username || user.username.toLowerCase() !== targetUsername)) {
+    return res.status(403).json({ error: 'User session does not match the supplied username.' });
   }
 
   user.role = 'professional';
   user.is_verified_pro = true;
-  user.aadhaar_no = cleanAadhaar;
+  user.aadhaar_hash = aadhaarHash;
+  delete user.aadhaar_no;
   user.face_scan_verified = true;
   user.verified_at = new Date().toISOString();
 
@@ -515,6 +607,7 @@ app.post('/api/auth/verify-professional', (req, res) => {
     role: 'professional',
     is_verified_pro: true,
     badge: '☑️ Verified Pro Creator',
+    token: issueSessionToken(user),
     user: updatedUser
   });
 });
@@ -541,13 +634,23 @@ app.post('/api/auth/login', async (req, res) => {
     bio: user.bio || '',
     vibes: user.vibes || [],
     role: user.role || 'normal',
-    is_verified_pro: !!user.is_verified_pro
+    is_verified_pro: !!user.is_verified_pro,
+    token: issueSessionToken(user)
   });
 });
 
 // Posts Routes with AI Alteration & Promotion Analysis
 app.post('/api/posts', (req, res) => {
-  const p = req.body;
+  const p = req.body || {};
+  if (!p.username || !String(p.username).trim()) {
+    return res.status(400).json({ error: 'Username is required' });
+  }
+  if (!p.location || !String(p.location).trim()) {
+    return res.status(400).json({ error: 'Spot location is required' });
+  }
+  if (!p.media && !(Array.isArray(p.carousel_media) && p.carousel_media.length)) {
+    return res.status(400).json({ error: 'At least one media item is required' });
+  }
   const db = readDB();
 
   const author = db.users.find(u => 
@@ -733,6 +836,9 @@ app.post('/api/posts/:id/save', (req, res) => {
   const id = parseInt(req.params.id);
   const { user_id } = req.body;
   const db = readDB();
+  if (!(db.posts || []).some(p => String(p.id) === String(id))) {
+    return res.status(404).json({ error: 'Post not found' });
+  }
   ensureCollection(db, 'saves');
 
   const saveIndex = db.saves.findIndex(s => String(s.post_id) === String(id) && String(s.user_id) === String(user_id));
@@ -961,6 +1067,9 @@ app.post('/api/comments/:id/like', (req, res) => {
   const id = parseInt(req.params.id);
   const { user_id } = req.body || {};
   const db = readDB();
+  if (!(db.comments || []).some(c => String(c.id) === String(id))) {
+    return res.status(404).json({ error: 'Comment not found' });
+  }
   ensureCollection(db, 'comment_likes');
 
   const index = db.comment_likes.findIndex(cl => cl.comment_id === id && String(cl.user_id) === String(user_id));
@@ -979,6 +1088,9 @@ app.post('/api/posts/:id/like', (req, res) => {
   const id = parseInt(req.params.id);
   const { user_id } = req.body;
   const db = readDB();
+  if (!(db.posts || []).some(p => String(p.id) === String(id))) {
+    return res.status(404).json({ error: 'Post not found' });
+  }
   ensureCollection(db, 'likes');
 
   const likeIndex = db.likes.findIndex(l => String(l.post_id) === String(id) && String(l.user_id) === String(user_id));
