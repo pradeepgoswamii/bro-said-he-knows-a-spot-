@@ -100,13 +100,13 @@
       <div class="glass-card p-5 rounded-2xl border-l-4 border-[#7fb4d4]">
         <div class="text-xs uppercase tracking-wider text-[#fdf1e1]/60 font-semibold mb-1">Traffic Congestion Index</div>
         <div class="text-lg font-bold text-[#7fb4d4] truncate" id="valTrafficIndex">—</div>
-        <div class="text-xs text-[#fdf1e1]/70 mt-1.5">No live traffic feed connected</div>
+        <div class="text-xs text-[#fdf1e1]/70 mt-1.5" id="valTrafficDesc">No community transport notes yet</div>
       </div>
 
       <div class="glass-card p-5 rounded-2xl border-l-4 border-amber-400">
         <div class="text-xs uppercase tracking-wider text-[#fdf1e1]/60 font-semibold mb-1">Hours to Avoid</div>
         <div class="text-sm font-bold text-amber-300 truncate" id="valAvoidHours">—</div>
-        <div class="text-xs text-[#fdf1e1]/70 mt-1.5">No verified crowd data source</div>
+        <div class="text-xs text-[#fdf1e1]/70 mt-1.5" id="valAvoidDesc">No community time-of-day notes yet</div>
       </div>
 
       <div class="glass-card p-5 rounded-2xl border-l-4 border-blue-400">
@@ -130,7 +130,12 @@
 
             <!-- Heatmap Layer Selector Buttons -->
             <div class="flex flex-wrap gap-1.5" id="heatmapLayerTabs">
-              <button class="layer-tab px-3 py-1.5 rounded-full text-xs font-medium bg-white/5 hover:bg-white/10 transition-all tab-active" data-layer="community">📍 Community Uploads</button>
+              <button class="layer-tab px-3 py-1.5 rounded-full text-xs font-medium bg-white/5 hover:bg-white/10 transition-all tab-active" data-layer="all">🌐 All</button>
+              <button class="layer-tab px-3 py-1.5 rounded-full text-xs font-medium bg-white/5 hover:bg-white/10 transition-all" data-layer="community">📍 Community Uploads</button>
+              <button class="layer-tab px-3 py-1.5 rounded-full text-xs font-medium bg-white/5 hover:bg-white/10 transition-all" data-layer="safety">🚨 Safety</button>
+              <button class="layer-tab px-3 py-1.5 rounded-full text-xs font-medium bg-white/5 hover:bg-white/10 transition-all" data-layer="traffic">🚗 Transport</button>
+              <button class="layer-tab px-3 py-1.5 rounded-full text-xs font-medium bg-white/5 hover:bg-white/10 transition-all" data-layer="scams">🎣 Scams</button>
+              <button class="layer-tab px-3 py-1.5 rounded-full text-xs font-medium bg-white/5 hover:bg-white/10 transition-all" data-layer="weather">🌦️ Weather</button>
             </div>
           </div>
 
@@ -182,6 +187,8 @@
           <button class="notif-pill px-2.5 py-1 rounded-full text-[11px] font-medium bg-white/10 text-white font-bold" data-cat="all">All</button>
           <button class="notif-pill px-2.5 py-1 rounded-full text-[11px] font-medium bg-white/5 text-[#fdf1e1]/70 hover:bg-white/10" data-cat="safety">🚨 Safety</button>
           <button class="notif-pill px-2.5 py-1 rounded-full text-[11px] font-medium bg-white/5 text-[#fdf1e1]/70 hover:bg-white/10" data-cat="traffic">🚗 Transport</button>
+          <button class="notif-pill px-2.5 py-1 rounded-full text-[11px] font-medium bg-white/5 text-[#fdf1e1]/70 hover:bg-white/10" data-cat="scams">🎣 Scams</button>
+          <button class="notif-pill px-2.5 py-1 rounded-full text-[11px] font-medium bg-white/5 text-[#fdf1e1]/70 hover:bg-white/10" data-cat="weather">🌦️ Weather</button>
         </div>
 
         <!-- Notifications Scroll List -->
@@ -198,7 +205,7 @@
       ? 'http://localhost:3000/api'
       : (window.location.origin.includes(':') ? (window.location.origin.replace(/:[0-9]+$/, ':3000') + '/api') : '/api');
     let currentAnalytics = null;
-    let activeLayer = 'community';
+    let activeLayer = 'all';
     let activeNotifCat = 'all';
 
     document.addEventListener('DOMContentLoaded', () => {
@@ -270,8 +277,18 @@
       document.getElementById('mapTitle').textContent = `Interactive Heatmap (${data.locationName})`;
       
       document.getElementById('valSafetyIndex').textContent = data.safetyIndex != null ? `${data.safetyIndex} / 10` : '—';
-      document.getElementById('valTrafficIndex').textContent = data.trafficIndex || 'No live traffic feed';
-      document.getElementById('valAvoidHours').textContent = data.avoidHours || 'No verified crowd data';
+      const safetyDesc = document.getElementById('valSafetyDesc');
+      if (safetyDesc) safetyDesc.textContent = data.safetyIndex != null
+        ? `Derived from ${data.flagCount || 0} community advisories` : 'No community safety reports yet';
+
+      document.getElementById('valTrafficIndex').textContent = data.trafficIndex || 'No transport notes';
+      const trafficDesc = document.getElementById('valTrafficDesc');
+      if (trafficDesc) trafficDesc.textContent = data.trafficIndex ? 'Reported by travelers on this platform' : 'No community transport notes yet';
+
+      document.getElementById('valAvoidHours').textContent = data.avoidHours || '—';
+      const avoidDesc = document.getElementById('valAvoidDesc');
+      if (avoidDesc) avoidDesc.textContent = data.avoidHours ? 'Based on community weather/transport notes' : 'No community time-of-day notes yet';
+
       document.getElementById('valPostsCount').textContent = `${data.userPostsCount || 0} Uploads`;
 
       renderHeatmapOverlay();
@@ -295,6 +312,9 @@
         dot.className = 'absolute transform -translate-x-1/2 -translate-y-1/2 heatmap-dot flex items-center justify-center';
         dot.style.left = `${pt.x}%`;
         dot.style.top = `${pt.y}%`;
+        dot.tabIndex = 0;
+        dot.setAttribute('role', 'button');
+        dot.setAttribute('aria-label', pt.title);
 
         const colorClass = pt.intensity > 0.8 ? 'bg-red-500' : pt.intensity > 0.6 ? 'bg-amber-400' : 'bg-emerald-400';
         const ringClass = pt.intensity > 0.8 ? 'border-red-500' : pt.intensity > 0.6 ? 'border-amber-400' : 'border-emerald-400';
@@ -306,19 +326,22 @@
           </div>
         `;
 
-        // Mouse hover for tooltip
-        dot.addEventListener('mouseenter', (e) => {
+        // Hover, tap, click and keyboard focus all reveal hotspot details.
+        const showTooltip = () => {
           const tooltip = document.getElementById('mapTooltip');
-          document.getElementById('tooltipTitle').textContent = pt.title;
-          document.getElementById('tooltipDetail').textContent = pt.detail;
+          document.getElementById('tooltipTitle').textContent = pt.title || 'Community upload';
+          document.getElementById('tooltipDetail').textContent = pt.detail || 'Traveler upload from the community.';
           tooltip.style.left = `${pt.x}%`;
           tooltip.style.top = `${pt.y}%`;
           tooltip.classList.remove('hidden');
-        });
+        };
+        const hideTooltip = () => document.getElementById('mapTooltip').classList.add('hidden');
 
-        dot.addEventListener('mouseleave', () => {
-          document.getElementById('mapTooltip').classList.add('hidden');
-        });
+        dot.addEventListener('mouseenter', showTooltip);
+        dot.addEventListener('mouseleave', hideTooltip);
+        dot.addEventListener('click', (e) => { e.stopPropagation(); showTooltip(); });
+        dot.addEventListener('focus', showTooltip);
+        dot.addEventListener('blur', hideTooltip);
 
         container.appendChild(dot);
       });
@@ -337,31 +360,49 @@
       }
 
       filtered.forEach(n => {
-        const card = document.createElement('div');
         const isUrgent = n.urgency === 'high';
         const isWarning = n.urgency === 'warning';
         const borderClass = isUrgent ? 'border-red-500/30 bg-red-500/10' : isWarning ? 'border-amber-500/30 bg-amber-500/10' : 'border-white/10 bg-white/5';
         const tagColor = isUrgent ? 'bg-red-500/20 text-red-300' : isWarning ? 'bg-amber-500/20 text-amber-300' : 'bg-blue-500/20 text-blue-300';
-        const isUserPost = n.source === 'community_post';
 
+        const card = document.createElement('div');
         card.className = `p-3.5 rounded-2xl border ${borderClass} space-y-2 transition-all hover:scale-[1.01]`;
-        card.innerHTML = `
-          <div class="flex justify-between items-start">
-            <div class="flex items-center gap-2">
-              <span class="text-base">${n.icon || '⚠️'}</span>
-              <strong class="text-xs text-[#fdf1e1] font-semibold">${n.title}</strong>
-            </div>
-            <span class="text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${tagColor}">${n.urgency || 'notice'}</span>
-          </div>
-          <p class="text-xs text-[#fdf1e1]/80 leading-relaxed">${n.message}</p>
-          <div class="flex justify-between items-center text-[10px] text-[#fdf1e1]/60 pt-1.5 border-t border-white/5">
-            <span>📍 ${n.locationDetail || 'Location'}</span>
-            <div class="flex items-center gap-1">
-              ${isUserPost ? '<span class="text-blue-400 font-medium">☑️ Community Upload</span>' : '<span class="text-blue-400 font-medium">Community Upload</span>'}
-              <span>• ${n.timestamp}</span>
-            </div>
-          </div>
-        `;
+
+        const header = document.createElement('div');
+        header.className = 'flex justify-between items-start gap-2';
+        const heading = document.createElement('div');
+        heading.className = 'flex items-center gap-2';
+        const icon = document.createElement('span');
+        icon.className = 'text-base';
+        icon.textContent = n.icon || '⚠️';
+        const title = document.createElement('strong');
+        title.className = 'text-xs text-[#fdf1e1] font-semibold';
+        title.textContent = n.title || 'Community advisory';
+        heading.append(icon, title);
+        const badge = document.createElement('span');
+        badge.className = `text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${tagColor}`;
+        badge.textContent = n.urgency || 'notice';
+        header.append(heading, badge);
+
+        const message = document.createElement('p');
+        message.className = 'text-xs text-[#fdf1e1]/80 leading-relaxed';
+        message.textContent = n.message || '';
+
+        const meta = document.createElement('div');
+        meta.className = 'flex justify-between items-center text-[10px] text-[#fdf1e1]/60 pt-1.5 border-t border-white/5 gap-2';
+        const location = document.createElement('span');
+        location.textContent = `📍 ${n.locationDetail || 'Location'}`;
+        const footer = document.createElement('div');
+        footer.className = 'flex items-center gap-1';
+        const source = document.createElement('span');
+        source.className = 'text-blue-400 font-medium';
+        source.textContent = n.source === 'community_post' ? '☑️ Community Upload' : 'Community Upload';
+        const time = document.createElement('span');
+        time.textContent = `• ${n.timestamp || 'Recent'}`;
+        footer.append(source, time);
+        meta.append(location, footer);
+
+        card.append(header, message, meta);
         list.appendChild(card);
       });
     }

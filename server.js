@@ -1214,11 +1214,11 @@ function syncFollowCounts(db) {
 const travelPlanner = require('./travelPlannerService');
 const dashboardService = require('./dashboardService');
 
-app.post('/api/dashboard/analyze-place', (req, res) => {
+app.post('/api/dashboard/analyze-place', async (req, res) => {
   try {
     const { location } = req.body;
     const db = readDB();
-    const analytics = dashboardService.generatePlaceAnalytics(location, db);
+    const analytics = await dashboardService.generatePlaceAnalytics(location, db);
     res.json(analytics);
   } catch (err) {
     console.error('Error in /api/dashboard/analyze-place:', err);
